@@ -41,10 +41,12 @@ import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.google.gson.reflect.TypeToken;
 
+import java.lang.reflect.Array;
 import java.lang.reflect.Type;
 import java.util.ArrayList;
 import java.util.Calendar;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
@@ -71,6 +73,7 @@ public class FlutterLocalNotificationsPlugin implements MethodCallHandler, Plugi
     private static final String CANCEL_METHOD = "cancel";
     private static final String CANCEL_ALL_METHOD = "cancelAll";
     private static final String SCHEDULE_METHOD = "schedule";
+    private static final String BATCH_SCHEDULE_METHOD = "batchSchedule";
     private static final String PERIODICALLY_SHOW_METHOD = "periodicallyShow";
     private static final String SHOW_DAILY_AT_TIME_METHOD = "showDailyAtTime";
     private static final String SHOW_WEEKLY_AT_DAY_AND_TIME_METHOD = "showWeeklyAtDayAndTime";
@@ -248,6 +251,30 @@ public class FlutterLocalNotificationsPlugin implements MethodCallHandler, Plugi
         }
     }
 
+    private void batchScheduleNotification(Context context, ArrayList<NotificationDetails> detailsList, boolean updateScheduledNotificationsCache) {
+        List<String> notificationDetailsJsons = new ArrayList<>();
+        Gson gson = buildGson();
+        for(NotificationDetails d : detailsList) {
+            notificationDetailsJsons.add(gson.toJson(d));
+        }
+        Intent notificationIntent = new Intent(context, ScheduledNotificationReceiver.class);
+        AlarmManager alarmManager = getAlarmManager(context);
+        for (int i = 0; i < notificationDetailsJsons.size(); i++) {
+            NotificationDetails notificationDetails = detailsList.get(i);
+            String details = notificationDetailsJsons.get(i);
+            notificationIntent.putExtra(NOTIFICATION_DETAILS, details);
+            PendingIntent pendingIntent = PendingIntent.getBroadcast(context, notificationDetails.id, notificationIntent, PendingIntent.FLAG_UPDATE_CURRENT);
+            if (BooleanUtils.getValue(notificationDetails.allowWhileIdle)) {
+                AlarmManagerCompat.setExactAndAllowWhileIdle(alarmManager, AlarmManager.RTC_WAKEUP, notificationDetails.millisecondsSinceEpoch, pendingIntent);
+            } else {
+                AlarmManagerCompat.setExact(alarmManager, AlarmManager.RTC_WAKEUP, notificationDetails.millisecondsSinceEpoch, pendingIntent);
+            }
+        }
+        if (updateScheduledNotificationsCache) {
+            batchSaveScheduledNotification(context, detailsList);
+        }
+    }
+
     private static void repeatNotification(Context context, NotificationDetails notificationDetails, Boolean updateScheduledNotificationsCache) {
         Gson gson = buildGson();
         String notificationDetailsJson = gson.toJson(notificationDetails);
@@ -312,6 +339,23 @@ public class FlutterLocalNotificationsPlugin implements MethodCallHandler, Plugi
             scheduledNotificationsToSave.add(scheduledNotification);
         }
         scheduledNotificationsToSave.add(notificationDetails);
+        saveScheduledNotifications(context, scheduledNotificationsToSave);
+    }
+
+    private static void batchSaveScheduledNotification(Context context, ArrayList<NotificationDetails> scheduledNotificationsToSave) {
+        ArrayList<NotificationDetails> scheduledNotifications = loadScheduledNotifications(context);
+
+        HashSet<Integer> ids = new HashSet<>();
+        for (int i = 0; i < scheduledNotificationsToSave.size(); i++) {
+            ids.add(scheduledNotificationsToSave.get(i).id);
+        }
+
+        for (NotificationDetails scheduledNotification : scheduledNotifications) {
+            if (ids.contains(scheduledNotification.id)) {
+                continue;
+            }
+            scheduledNotificationsToSave.add(scheduledNotification);
+        }
         saveScheduledNotifications(context, scheduledNotificationsToSave);
     }
 
@@ -624,6 +668,10 @@ public class FlutterLocalNotificationsPlugin implements MethodCallHandler, Plugi
                 schedule(call, result);
                 break;
             }
+            case BATCH_SCHEDULE_METHOD: {
+                batchSchedule(call, result);
+                break;
+            }
             case PERIODICALLY_SHOW_METHOD:
             case SHOW_DAILY_AT_TIME_METHOD:
             case SHOW_WEEKLY_AT_DAY_AND_TIME_METHOD: {
@@ -682,6 +730,19 @@ public class FlutterLocalNotificationsPlugin implements MethodCallHandler, Plugi
             scheduleNotification(registrar.context(), notificationDetails, true);
             result.success(null);
         }
+    }
+
+    private void batchSchedule(MethodCall call, Result result) {
+        ArrayList<Map<String, Object>> arguments = call.arguments();
+        ArrayList<NotificationDetails> details = new ArrayList<>();
+        for (int i = 0; i < arguments.size(); i++) {
+            NotificationDetails notificationDetails = extractNotificationDetails(result, arguments.get(i));
+            if (notificationDetails != null) {
+                details.add(notificationDetails);
+            }
+        }
+        batchScheduleNotification(registrar.context(), details, true);
+        result.success(null);
     }
 
     private void show(MethodCall call, Result result) {
