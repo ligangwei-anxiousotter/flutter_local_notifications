@@ -159,6 +159,37 @@ class FlutterLocalNotificationsPlugin {
     });
   }
 
+  /// May god forgive me
+  Future<void> batchSchedule(
+      List<int> ids,
+      List<String> titles,
+      List<String> bodies,
+      List<DateTime> scheduledDates,
+      List<NotificationDetails> notificationDetails,
+      List<String> payloads,
+      {bool androidAllowWhileIdle = false}) async {
+    ids.forEach(_validateId);
+    List<Map<String, dynamic>> arguments = <Map<String, dynamic>>[];
+
+    for (var i = 0; i < ids.length; ++i) {
+      var serializedPlatformSpecifics =
+          _retrievePlatformSpecificNotificationDetails(notificationDetails[i]);
+      if (_platform.isAndroid) {
+        serializedPlatformSpecifics['allowWhileIdle'] = androidAllowWhileIdle;
+      }
+      arguments.add(<String, dynamic>{
+        'id': ids[i],
+        'title': titles[i],
+        'body': bodies[i],
+        'millisecondsSinceEpoch': scheduledDates[i].millisecondsSinceEpoch,
+        'platformSpecifics': serializedPlatformSpecifics,
+        'payload': payloads[i] ?? ''
+      });
+    }
+
+    await _channel.invokeMethod('batchSchedule', arguments);
+  }
+
   /// Periodically show a notification using the specified interval.
   /// For example, specifying a hourly interval means the first time the notification will be an hour after the method has been called and then every hour after that.
   Future<void> periodicallyShow(int id, String title, String body,
